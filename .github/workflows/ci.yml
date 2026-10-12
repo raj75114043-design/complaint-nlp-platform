@@ -1,0 +1,41 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    env: {LLM_PROVIDER: none}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Dataset is reproducible from its generator
+        run: python -m cnlp.cli data && git diff --exit-code data/complaints.jsonl
+      - name: Tests
+        run: pytest -q
+      - name: NLP quality gate (PII, classification, urgency, novelty, spikes, drift, active learning)
+        run: python -m cnlp.eval.run --gate
+      - name: Train, register and promote the champion model
+        run: python -m cnlp.cli train --promote-if-better
+      - uses: actions/upload-artifact@v7
+        with:
+          name: eval-report
+          path: |
+            reports/
+            models/registry.json
+
+  docker:
+    needs: [quality]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions: {contents: read, packages: write}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - uses: docker/build-push-action@v7
+        with:
+          push: true
+          tags: ghcr.io/${{ github.repository }}:latest,ghcr.io/${{ github.repository }}:${{ github.sha }}
