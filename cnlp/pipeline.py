@@ -19,6 +19,7 @@ from cnlp.triage import assess
 log = logging.getLogger("cnlp.pipeline")
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data" / "complaints.jsonl"
+OWN_NAMES = {"Kestrel Bank", "Kestrel Bank Customer", "Kestrel Bank Customer Care"}
 PROMISE = re.compile(r"\b(will|shall) (?:be )?(?:refund|credit|reverse|waive)\w*|\bguarantee|\bwithin \d+ (?:hours|days)\b", re.I)
 
 
@@ -57,11 +58,17 @@ def draft_reply(redacted: str, triage: dict, llm: LLMClient, usage: LLMUsage) ->
     if not llm.available:
         return template, "template"
     text = llm.chat("Write a short, empathetic acknowledgement (max 70 words) from Kestrel Bank to a customer. Do not promise refunds, "
-                    "amounts or timelines other than the due date given. Do not include any personal data.",
+                    "amounts or timelines other than the due date given. Do not include any personal data. Sign off exactly as "
+                    "'Kestrel Bank Customer Care'.",
                     json.dumps({"complaint": redacted, "queue": triage["queue"], "due": triage["due"]}), usage=usage, max_tokens=250)
-    if isinstance(text, str) and not PROMISE.search(text) and not re.search(r"\d{6,}|@", text) and redact(text)[1] == []:
-        return text.strip(), "llm"
-    return template, "template_fallback"
+    if not isinstance(text, str) or not text.strip():
+        return template, "template_fallback (LLM unavailable)"
+    leaked = [s for s in redact(text)[1] if s.value not in OWN_NAMES]   # the bank's own name in a sign-off is not personal data
+    if PROMISE.search(text):
+        return template, "template_fallback (LLM draft made a promise)"
+    if re.search(r"\d{6,}|@", text) or leaked:
+        return template, "template_fallback (LLM draft contained personal data)"
+    return text.strip(), "llm"
 
 
 def process(text: str, received: str, channel: str = "web_form", model: ComplaintModel | None = None, llm: LLMClient | None = None) -> dict:
