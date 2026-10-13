@@ -35,3 +35,9 @@ def test_bank_sign_off_is_not_personal_data():
 
 def test_llm_failure_is_labelled():
     assert draft_reply("x", TRI, FakeLLM(None), LLMUsage())[1] == "template_fallback (LLM unavailable)"
+
+
+def test_reference_from_redacted_complaint_may_be_quoted():
+    red = "Rs 18,000 debited, UTR 412345678901, card [CARD]"
+    assert draft_reply(red, TRI, FakeLLM("We are reviewing transaction 412345678901 for you."), LLMUsage())[1] == "llm"
+    assert draft_reply(red, TRI, FakeLLM("We are reviewing account 998877665544 for you."), LLMUsage())[1].startswith("template_fallback")

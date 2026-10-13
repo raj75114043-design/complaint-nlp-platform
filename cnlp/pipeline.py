@@ -58,16 +58,20 @@ def draft_reply(redacted: str, triage: dict, llm: LLMClient, usage: LLMUsage) ->
     if not llm.available:
         return template, "template"
     text = llm.chat("Write a short, empathetic acknowledgement (max 70 words) from Kestrel Bank to a customer. Do not promise refunds, "
-                    "amounts or timelines other than the due date given. Do not include any personal data. Sign off exactly as "
+                    "amounts or timelines other than the due date given. Do not include any personal data or repeat reference numbers. Sign off exactly as "
                     "'Kestrel Bank Customer Care'.",
                     json.dumps({"complaint": redacted, "queue": triage["queue"], "due": triage["due"]}), usage=usage, max_tokens=250)
     if not isinstance(text, str) or not text.strip():
         return template, "template_fallback (LLM unavailable)"
-    leaked = [s for s in redact(text)[1] if s.value not in OWN_NAMES]   # the bank's own name in a sign-off is not personal data
+    # the bank's own name in a sign-off is not personal data; numbers already present in the redacted complaint (payment
+    # references) are not personal data either — redaction removed everything that was
+    leaked = [s for s in redact(text)[1] if s.value not in OWN_NAMES and s.value not in redacted]
+    long_numbers = [n for n in re.findall(r"\d{6,}", text) if n not in redacted]
     if PROMISE.search(text):
         return template, "template_fallback (LLM draft made a promise)"
-    if re.search(r"\d{6,}|@", text) or leaked:
-        return template, "template_fallback (LLM draft contained personal data)"
+    if long_numbers or "@" in text or leaked:
+        kinds = sorted({s.type for s in leaked} | ({"NUMBER"} if long_numbers else set()) | ({"EMAIL"} if "@" in text else set()))
+        return template, f"template_fallback (LLM draft contained personal data: {', '.join(kinds)})"
     return text.strip(), "llm"
 
 
